@@ -15,15 +15,15 @@ double angle_acc_fil;
 char FlagCalcul = 0;
 float Te = 10;   // période d'échantillonage en ms
 float Tau = 100; // constante de temps du filtre en ms
-float theta_g, theta_gf, theta_w, theta_wf, theta_somme, theta_equilibre = 0.01;
+float theta_g, theta_gf, theta_w, theta_wf, theta_somme, theta_equilibre = -0.04;
 float kd = 0, kp = 0, erreur, commande;
-float offsetC = 0;
+float offsetC = 0.15;
 float theta_consigne = 0 + theta_equilibre;
 float deriv_erreur;
 static float erreur_precedente = 0;
 float rapportcycliqueA, rapportcycliqueB, alpha1, alpha2;
 // vitesse :
-float erreurvit, vit_GObs, vit_DObs, vit_Obs, TrA, TrB, kpvit, vit_consigne = 0, kpvit_cmd, kdvit, deriv_erreurvit, erreurvit_precedente;
+float erreurvit, vit_GObs, vit_GObsf, vit_DObs, vit_DObsf, vit_Obs, TrA, TrB, kpvit, vit_consigne = 0, kpvit_cmd, kdvit, deriv_erreurvit, erreurvit_precedente;
 
 // encoderus :
 ESP32Encoder encoder;
@@ -63,7 +63,7 @@ void controle(void *parameters)
     /*********************************************************************************
                  Asserv pos angulaire : calcul grandeur de commande
     **********************************************************************************/
-
+    theta_consigne = 0 + theta_equilibre;
     // calcul de l'erreur et sa derivée
     erreur = theta_consigne - theta_somme;
     deriv_erreur = (erreur - erreur_precedente) / (Te / 1000);
@@ -71,7 +71,7 @@ void controle(void *parameters)
     // calcul de a commande  = K * erreur + Kd * deriver erreur
     // commande = kp*erreur+ kd*deriv_erreur;
     // calcul de a commande  = K * erreur - Kd * rotation angulaire z:
-    commande = kp * erreur - kd * theta_w;
+    commande = kp * erreur + kd * g.gyro.z;
 
     // Compensation frottements sec :
     if (commande > 0)
@@ -96,25 +96,41 @@ void controle(void *parameters)
                                      Asserv Vitesse
     **********************************************************************************/
     // Mesure Vitesse :
-    float encodeurp = 0;
-    float encodeur2p = 0;
-
+    float encodeurp;
+    float encodeur2p;
     encodeur = encoder.getCount();
     encodeur2 = encoder2.getCount();
-    TrA = (encodeur - encodeurp) / 680;
-    TrB = (encodeur2 - encodeur2p) / 680;
+    TrA = (encodeur - encodeurp) / 680.0;
+    TrB = (encodeur2 - encodeur2p) / 680.0;
+    encodeurp = encodeur;
+    encodeur2p = encodeur2;
 
     vit_DObs = TrA / (Te / 1000);
     vit_GObs = TrB / (Te / 1000);
-    encodeurp = encodeur;
-    encodeur2p = encodeur2;
-    vit_Obs = (vit_DObs + vit_GObs) / 2;
+
+    // Filtre Pr Vitesse :
+    vit_DObsf = vit_DObs * A + B * vit_DObsf;
+    vit_GObsf = vit_GObs * A + B * vit_GObsf;
+
+    vit_Obs = (vit_DObsf + vit_GObsf) / 2;
 
     // AsserVitesse //:
+
     erreurvit = vit_consigne - vit_Obs;
     deriv_erreurvit = (erreurvit - erreurvit_precedente) / (Te / 1000);
     erreurvit_precedente = erreurvit;
     kpvit_cmd = kpvit * erreurvit + kdvit * deriv_erreurvit;
+    // Saturation theta consigne :
+    theta_consigne = kpvit_cmd;
+
+    if (theta_consigne > 0.09)
+    {
+      theta_consigne = 0.09;
+    }
+    else if (theta_consigne < -0.09)
+    {
+      theta_consigne = -0.09;
+    }
 
     // controle des PWM :
 
@@ -233,6 +249,7 @@ void reception(char ch)
     {
       offsetC = valeur.toFloat();
     }
+    
     if (commande == "Kpvit")
     {
       kpvit = valeur.toFloat();
@@ -241,7 +258,10 @@ void reception(char ch)
     {
       kdvit = valeur.toFloat();
     }
-
+    if (commande == "vitcons")
+    {
+      vit_consigne = valeur.toFloat();
+    }
     chaine = "";
   }
   else
@@ -259,11 +279,11 @@ void loop()
   {
     Serial.print(theta_somme);
     Serial.print(" ");
-    Serial.print(commande);
+    Serial.print(theta_consigne);
     Serial.print("  ");
-    Serial.print(vit_DObs);
+    Serial.print(vit_Obs);
     Serial.print("  ");
-    Serial.print(vit_GObs);
+    Serial.print(vit_consigne);
     Serial.println("  ");
 
     FlagCalcul = 0;
